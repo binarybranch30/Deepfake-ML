@@ -1,4 +1,4 @@
-"""Fine-tune ImageNet-pretrained ResNet18 on the organizer-provided data.
+"""Fine-tune ImageNet-pretrained ResNet18 or EfficientNet-B0 on organizer data.
 
 Usage from repository root:
     python -m training.train --dataset_dir /kaggle/input/.../hackathon_dataset \
@@ -79,10 +79,17 @@ def get_transforms(train: bool):
     return transforms.Compose(parts)
 
 
-def build_model(pretrained: bool) -> nn.Module:
-    weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
-    net = models.resnet18(weights=weights)
-    net.fc = nn.Linear(net.fc.in_features, 1)
+def build_model(arch: str, pretrained: bool) -> nn.Module:
+    if arch == "resnet18":
+        weights = models.ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        net = models.resnet18(weights=weights)
+        net.fc = nn.Linear(net.fc.in_features, 1)
+    elif arch == "efficientnet_b0":
+        weights = models.EfficientNet_B0_Weights.IMAGENET1K_V1 if pretrained else None
+        net = models.efficientnet_b0(weights=weights)
+        net.classifier[-1] = nn.Linear(net.classifier[-1].in_features, 1)
+    else:
+        raise ValueError(f"Unsupported architecture: {arch}")
     return net
 
 
@@ -118,6 +125,7 @@ def git_commit():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset_dir", type=Path, required=True)
+    parser.add_argument("--arch", choices=["resnet18", "efficientnet_b0"], default="resnet18")
     parser.add_argument("--split_dir", type=Path, default=Path("data/splits"))
     parser.add_argument("--output_dir", type=Path, default=Path("runs/r3-resnet18-adamw"))
     parser.add_argument("--epochs", type=int, default=10)
@@ -162,19 +170,21 @@ def main():
                             num_workers=args.num_workers, pin_memory=device.type == "cuda")
 
     try:
-        model = build_model(pretrained=True).to(device)
+        model = build_model(args.arch, pretrained=True).to(device)
     except Exception as error:
         raise RuntimeError(
             "Could not load ImageNet weights. Enable Kaggle Internet for the first download "
-            "or attach a cached ImageNet ResNet18 checkpoint. Do not replace it with "
+            "or attach the exact ImageNet pretrained checkpoint for your architecture. Do not replace it with "
             "deepfake-pretrained weights."
         ) from error
     criterion = nn.BCEWithLogitsLoss()
+    head_prefix = "fc." if args.arch == "resnet18" else "classifier."
     optimizer = torch.optim.AdamW(
         [
-            {"params": [param for name, param in model.named_parameters() if not name.startswith("fc.")],
-             "lr": args.backbone_lr},
-            {"params": model.fc.parameters(), "lr": args.head_lr},
+            {"params": [param for name, param in model.named_parameters()
+                        if not name.startswith(head_prefix)], "lr": args.backbone_lr},
+            {"params": [param for name, param in model.named_parameters()
+                        if name.startswith(head_prefix)], "lr": args.head_lr},
         ],
         weight_decay=args.weight_decay,
     )
@@ -183,7 +193,7 @@ def main():
 
     config = vars(args).copy()
     config = {key: str(value) if isinstance(value, Path) else value for key, value in config.items()}
-    config.update({"model": "resnet18", "pretrained": "ImageNet IMAGENET1K_V1",
+    config.update({"model": args.arch, "pretrained": "ImageNet IMAGENET1K_V1",
                    "class_0": "real", "class_1": "fake", "selection_metric": "val_auc",
                    "image_size": 224, "git_commit": git_commit(),
                    "split_sha256": {"train": file_digest(train_path), "val": file_digest(val_path)},
@@ -223,7 +233,7 @@ def main():
 
         if auc > best_auc + 1e-6:
             best_auc, best_epoch, stalled = auc, epoch, 0
-            torch.save({"state_dict": model.state_dict(), "arch": "resnet18",
+            torch.save({"state_dict": model.state_dict(), "arch": args.arch,
                         "threshold": 0.5, "image_size": 224,
                         "best_val_auc": auc, "best_epoch": epoch},
                        args.output_dir / "best_model.pt")

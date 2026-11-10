@@ -40,9 +40,15 @@ class TestFaces(Dataset):
         return pixels, path.stem
 
 
-def build_model():
-    net = models.resnet18(weights=None)
-    net.fc = nn.Linear(net.fc.in_features, 1)
+def build_model(arch: str):
+    if arch == "resnet18":
+        net = models.resnet18(weights=None)
+        net.fc = nn.Linear(net.fc.in_features, 1)
+    elif arch == "efficientnet_b0":
+        net = models.efficientnet_b0(weights=None)
+        net.classifier[-1] = nn.Linear(net.classifier[-1].in_features, 1)
+    else:
+        raise ValueError(f"Unsupported checkpoint architecture: {arch}")
     return net
 
 
@@ -66,14 +72,15 @@ def main():
     if not isinstance(checkpoint, dict):
         raise ValueError("Expected a weights dict or training/train.py checkpoint")
     if "state_dict" in checkpoint:
-        if checkpoint.get("arch", "resnet18") != "resnet18":
-            raise ValueError("Unsupported checkpoint architecture")
+        arch = checkpoint.get("arch", "resnet18")
         state_dict = checkpoint["state_dict"]
         threshold = float(checkpoint.get("threshold", 0.5))
     else:
+        # Backward compatibility with standalone ResNet18 state dictionaries.
+        arch = "resnet18"
         state_dict = checkpoint
         threshold = 0.5
-    model = build_model()
+    model = build_model(arch)
     model.load_state_dict(state_dict, strict=True)
     model.to(device).eval()
 
