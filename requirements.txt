@@ -1,0 +1,11 @@
+# Python 3.10, PyTorch 2.x for competition compliance.
+# On Kaggle, prefer the preinstalled compatible torch+torchvision GPU build.
+# Outside Kaggle install matching torch/torchvision builds per pytorch.org.
+torch>=2.2,<3
+torchvision>=0.17,<1
+numpy>=1.24,<3
+pandas>=2.0,<3
+scikit-learn>=1.3,<2
+Pillow>=10,<12
+tqdm>=4.66,<5
+matplotlib>=3.8,<4
