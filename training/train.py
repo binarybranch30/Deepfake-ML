@@ -136,10 +136,14 @@ def main():
     parser.add_argument("--backbone_lr", type=float, default=1e-5)
     parser.add_argument("--head_lr", type=float, default=1e-4)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--label_smoothing", type=float, default=0.0,
+                        help="Binary target smoothing: 0 = disabled, 0.05 maps targets to 0.025/0.975")
     args = parser.parse_args()
 
     if args.epochs < 1 or args.batch_size < 1 or args.patience < 1:
         parser.error("epochs, batch_size and patience must be positive")
+    if not (0.0 <= args.label_smoothing < 1.0):
+        parser.error("label_smoothing must be >= 0 and < 1")
     if args.output_dir.exists() and any(args.output_dir.iterdir()):
         parser.error(f"Output directory is not empty: {args.output_dir} (use a fresh run name)")
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -215,7 +219,9 @@ def main():
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type="cuda", enabled=device.type == "cuda"):
                 logits = model(images).flatten()
-                loss = criterion(logits, labels)
+                # Smooth TRAIN labels only; validation labels remain unchanged.
+                train_targets = labels * (1.0 - args.label_smoothing) + 0.5 * args.label_smoothing
+                loss = criterion(logits, train_targets)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
